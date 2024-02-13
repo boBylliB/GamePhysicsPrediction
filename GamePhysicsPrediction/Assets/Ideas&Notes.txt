@@ -1,0 +1,25 @@
+Firing behavior
+
+Trajectory class
+Variables:
+- Vector3 launchVec
+- float launchSpd
+- List<GameObject> intersections
+- List<Vector3> impactPoints
+Class Functions:
+Static Functions:
+- calculateFiringSolutions(float exitSpd, Vector3 target) -> List<Trajectory>
+  - Calculates firing vector given exit speed and target
+  - direct
+  - no checks
+- calculateFiringSolutions(float exitSpd, Vector3 target, List<GameObject> obstacles) -> List<Trajectory>
+  - Calculates firing vector options given exit speed, target, and obstacles to take into account
+  - direct
+  - checks for obstacle intersections
+- calculateFiringSolutions(float exitSpd, Vector3 target, List<GameObject> noBounceObstacles, List<GameObject> bounceObstacles) -> List<Trajectory>
+  - Calculates firing vector options given exit speed, target, and obstacles to take into account
+  - Searches for ricochets
+  - checks for obstacle intersections
+
+Use Async functions to find impact points
+Can then use raycasts to approximate a parabola and not have to worry about it taking a couple of frames
