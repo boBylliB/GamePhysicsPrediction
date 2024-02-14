@@ -7,6 +7,7 @@ public class Firing : BallisticBehavior
     public Kinematic character;
     public GameObject target;
     public float firingSpeed = 1f;
+    public bool selectSoonest = true;
 
     public virtual Vector3 getTargetPosition()
     {
@@ -15,14 +16,14 @@ public class Firing : BallisticBehavior
     public override Trajectory getTrajectory()
     {
         Trajectory output = null;
-        float impactTime = float.MaxValue;
+        float impactTime = 0;
 
         // Get all possible firing solutions
         List<Trajectory> trajectories = Trajectory.calculateFiringSolutions(character.transform.position, getTargetPosition(), firingSpeed);
         // Select the soonest possible firing solution
         foreach (Trajectory traj in trajectories)
         {
-            if (traj.impactTime < impactTime && traj.impactTime >= 0)
+            if ((output == null || ((traj.impactTime > impactTime && !selectSoonest) || (traj.impactTime < impactTime && selectSoonest))) && traj.impactTime >= 0)
             {
                 impactTime = traj.impactTime;
                 output = traj;
