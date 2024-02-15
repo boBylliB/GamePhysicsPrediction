@@ -332,7 +332,7 @@ MonoBehaviour:
   maxAngularVelocity: 45
   myTarget: {fileID: 0}
   maxAcceleration: 10
-  frictionPercent: 1
+  frictionPercent: 0.5
 --- !u!1 &705507993
 GameObject:
   m_ObjectHideFlags: 0
@@ -642,11 +642,13 @@ MonoBehaviour:
   maxSpeed: 3
   maxAngularVelocity: 45
   myTarget: {fileID: 673897912}
-  firingSpeed: 20
+  firingSpeed: 15
   reloadTime: 3
   projectilePrefab: {fileID: 3641261578354513316, guid: 952aee7244deb0c4bb8a1d0ec9b2f64d, type: 3}
   tankMoveTarget: {fileID: 1012804972}
   selectSoonest: 0
+  successMat: {fileID: 2100000, guid: 56b306bf5cf435041ac1d5270d89c71b, type: 2}
+  failMat: {fileID: 2100000, guid: 4505904a8dd3bc5498a85de3825183df, type: 2}
 --- !u!135 &993722631
 SphereCollider:
   m_ObjectHideFlags: 0

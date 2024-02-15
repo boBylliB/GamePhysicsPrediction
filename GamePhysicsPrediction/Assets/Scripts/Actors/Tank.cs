@@ -1,6 +1,5 @@
 using System.Collections;
 using System.Collections.Generic;
-using UnityEditorInternal;
 using UnityEngine;
 
 public class Tank : Kinematic
@@ -13,6 +12,9 @@ public class Tank : Kinematic
     public Kinematic projectilePrefab;
     public GameObject tankMoveTarget;
     public bool selectSoonest = true;
+
+    public Material successMat;
+    public Material failMat;
 
     private float fireTimer = 0;
 
@@ -42,6 +44,7 @@ public class Tank : Kinematic
             Trajectory firingTrajectory = myBallisticType.getTrajectory();
             if (firingTrajectory != null)
             {
+                GetComponent<Renderer>().material = successMat;
                 // Setting rotation manually whenever firing to snap to the direction of the firing vector
                 transform.eulerAngles = new Vector3(Mathf.Asin(-firingTrajectory.launchVec.normalized.y) * Mathf.Rad2Deg, Mathf.Atan2(firingTrajectory.launchVec.x, firingTrajectory.launchVec.z) * Mathf.Rad2Deg, 0);
                 // Create and launch a new projectile
@@ -49,7 +52,11 @@ public class Tank : Kinematic
                 projectile.linearVelocity = firingTrajectory.launchVec;
                 fireTimer = reloadTime;
             }
-            else Debug.Log("Null trajectory");
+            else
+            {
+                GetComponent<Renderer>().material = failMat;
+                Debug.Log("Null trajectory");
+            }
         }
         base.Update();
     }
