@@ -9,6 +9,10 @@ public class Firing : BallisticBehavior
     public float firingSpeed = 1f;
     public bool selectSoonest = true;
 
+    public bool debug = false;
+    public LineRenderer lr;
+    public int linesPerSegment;
+
     public virtual Vector3 getTargetPosition()
     {
         return target.transform.position;
@@ -23,12 +27,16 @@ public class Firing : BallisticBehavior
         // Select the soonest possible firing solution
         foreach (Trajectory traj in trajectories)
         {
-            if ((output == null || ((traj.impactTime > impactTime && !selectSoonest) || (traj.impactTime < impactTime && selectSoonest))) && traj.impactTime >= 0)
+            if ((output == null || ((traj.impacts[0].timeDiff > impactTime && !selectSoonest) || (traj.impacts[0].timeDiff < impactTime && selectSoonest))) && traj.impacts[0].timeDiff >= 0)
             {
-                impactTime = traj.impactTime;
+                impactTime = traj.impacts[0].timeDiff;
                 output = traj;
             }
         }
+
+        // Debug output
+        if (debug)
+            output.displayTrajectory(lr, linesPerSegment);
 
         return output;
     }

@@ -16,6 +16,10 @@ public class Tank : Kinematic
     public Material successMat;
     public Material failMat;
 
+    public bool debug = false;
+    public LineRenderer lr;
+    public int linesPerSegment = 5;
+
     private float fireTimer = 0;
 
     // Start is called before the first frame update
@@ -30,6 +34,9 @@ public class Tank : Kinematic
         myBallisticType.target = myTarget;
         myBallisticType.firingSpeed = firingSpeed;
         myBallisticType.selectSoonest = selectSoonest;
+        myBallisticType.debug = debug;
+        myBallisticType.lr = lr;
+        myBallisticType.linesPerSegment = linesPerSegment;
     }
 
     // Update is called once per frame
