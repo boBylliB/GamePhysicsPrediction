@@ -45,7 +45,7 @@ public class Tank : Kinematic
         fireTimer -= Time.deltaTime;
         steeringUpdate = new SteeringOutput();
         steeringUpdate.linear = myMoveType.getSteering().linear;
-        if (fireTimer <= 0)
+        if (fireTimer <= 0 && Input.GetKey("space"))
         {
             Debug.Log("Attempting to fire!");
             Trajectory firingTrajectory = myBallisticType.getTrajectory();

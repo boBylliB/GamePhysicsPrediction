@@ -31,8 +31,19 @@ public class Projectile : Kinematic
         Debug.Log("Collided!");
         if (collision.gameObject.name != "Tank")
         {
-            // Theoretical explosion effect goes here
-            Destroy(this.gameObject);
+            // Check for bounce
+            Wall wall = collision.gameObject.GetComponent<Wall>();
+            if (wall != null && wall.bounceable)
+            {
+                // boing
+                // Reflect velocity based on impact normal
+                linearVelocity -= 2 * Vector3.Dot(linearVelocity, collision.GetContact(0).normal) * collision.GetContact(0).normal;
+            }
+            else
+            {
+                // Theoretical explosion effect goes here
+                Destroy(this.gameObject);
+            }
         }
     }
 }

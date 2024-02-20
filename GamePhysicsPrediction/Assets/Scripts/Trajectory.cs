@@ -114,7 +114,8 @@ public class Trajectory
 
     // Public-facing static functions
     // Calculates firing vector options given exit speed, target point, and (optionally) obstacles to avoid
-    public static List<Trajectory> calculateFiringSolutions(Vector3 start, Vector3 target, float exitSpd, List<GameObject> obstacles = null)
+    // If obstacles to avoid are given, the game object calculating the firing solution also has to be provided
+    public static List<Trajectory> calculateFiringSolutions(Vector3 start, Vector3 target, float exitSpd, List<GameObject> obstacles = null, GameObject source = null, float uncertainty = 0.2f)
     {
         List<Trajectory> results = new List<Trajectory>();
 
@@ -133,27 +134,215 @@ public class Trajectory
             Vector3 launch = (2 * delta - Physics.gravity * impactTimes[0] * impactTimes[0]) / (2 * exitSpd * impactTimes[0]);
             launch = launch.normalized * exitSpd;
             Trajectory traj0 = new Trajectory(start, launch, target, impactTimes[0]);
-            results.Add(traj0);
+            // Check for intersections with obstacles
+            if (obstacles != null && source != null)
+            {
+                Impact impact = findFirstIntersection(traj0, source, uncertainty);
+                // If the impact point is within the given uncertainty of the target point, or no impact was found, the trajectory is good
+                if (impact == null || Vector3.Distance(impact.impactPoint, target) <= uncertainty)
+                    results.Add(traj0);
+            }
+            else results.Add(traj0);
         }
         if (impactTimes.Count > 1 && impactTimes[1] >= 0)
         {
             Vector3 launch = (2 * delta - Physics.gravity * impactTimes[1] * impactTimes[1]) / (2 * exitSpd * impactTimes[1]);
             launch = launch.normalized * exitSpd;
             Trajectory traj1 = new Trajectory(start, launch, target, impactTimes[1]);
-            results.Add(traj1);
+            // Check for intersections with obstacles
+            if (obstacles != null && source != null)
+            {
+                Impact impact = findFirstIntersection(traj1, source, uncertainty);
+                // If the impact point is within the given uncertainty of the target point, or no impact was found, the trajectory is good
+                if (impact == null || Vector3.Distance(impact.impactPoint, target) <= uncertainty)
+                    results.Add(traj1);
+            }
+            else results.Add(traj1);
         }
 
         return results;
     }
     // Calculates firing vector options given exit speed, target point, and obstacles to take into account, including ricochets
-    public static List<Trajectory> calculateFiringSolutions(Vector3 start, Vector3 target, float exitSpd, List<GameObject> noBounceObstacles, List<GameObject> bounceObstacles)
+    public static List<Trajectory> calculateFiringSolutions(Vector3 start, Vector3 target, float exitSpd, List<GameObject> noBounceObstacles, List<GameObject> bounceObstacles, GameObject source, int maxDepth = 4, float rayDist = 0.2f, float uncertainty = 0.2f)
     {
-        throw new NotImplementedException();
+        // This is utilizing a recursive search, prioritizing solutions with less bounces and therefore less cycles
+        // This public-facing function just provides a slightly easier-to-use entry point
+        // Please look at the first helper function for details
+        List<MirrorPlane> planes = new List<MirrorPlane>();
+        foreach (GameObject obstacle in noBounceObstacles)
+        {
+            // Cast a ray to the center of the obstacle, to determine the normal to utilize
+            // This makes a huge simplification, only working for plane walls, but it was necessary for the current scope
+            RaycastHit hitInfo;
+            Collider coll = obstacle.gameObject.GetComponent<Collider>();
+            Vector3 delta = obstacle.gameObject.transform.position - start;
+            Ray ray = new Ray(start, obstacle.gameObject.transform.position - start);
+            if (coll.Raycast(ray, out hitInfo, delta.magnitude * 1.1f))
+            {
+                MirrorPlane plane = new MirrorPlane(hitInfo.normal, coll.bounds, false);
+                planes.Add(plane);
+            }
+            else
+            {
+                // Something went wrong
+                Debug.LogError("Failed to raycast to collider! Object name: " + obstacle.gameObject.name);
+            }
+        }
+        foreach (GameObject obstacle in bounceObstacles)
+        {
+            // Cast a ray to the center of the obstacle, to determine the normal to utilize
+            // This makes a huge simplification, only working for large walls, but it was necessary for the current scope
+            RaycastHit hitInfo;
+            Collider coll = obstacle.gameObject.GetComponent<Collider>();
+            Vector3 delta = obstacle.gameObject.transform.position - start;
+            Ray ray = new Ray(start, obstacle.gameObject.transform.position - start);
+            if (coll.Raycast(ray, out hitInfo, delta.magnitude * 1.1f))
+            {
+                MirrorPlane plane = new MirrorPlane(hitInfo.normal, coll.bounds, true);
+                planes.Add(plane);
+            }
+            else
+            {
+                // Something went wrong
+                Debug.LogError("Failed to raycast to collider! Object name: " + obstacle.gameObject.name);
+            }
+        }
+        List<MirrorOption> startOption = new List<MirrorOption>();
+        startOption.Add(new MirrorOption(planes, target));
+        // Grab potential trajectories
+        List<Trajectory> trajectories = checkForRicochets(start, exitSpd, source, maxDepth, 0, uncertainty, startOption);
+        // We want to update these trajectories to include the bounces they take, so we'll pass it through the update function to calculate actual bounces
+        for (int idx = 0; idx < trajectories.Count; idx++)
+            trajectories[idx] = updateTrajectory(trajectories[idx], maxDepth, source, rayDist);
+
+        return trajectories;
     }
 
 
     // Internal helper functions
-    private Impact findFinalImpact(Trajectory trajectory, int maxIterations, GameObject ignored, float rayDist)
+    private static List<Trajectory> checkForRicochets(Vector3 start, float exitSpd, GameObject source, int maxDepth, int currentDepth, float uncertainty, List<MirrorOption> mirrorOptions)
+    {
+        List<Trajectory> results = new List<Trajectory>();
+        List<MirrorOption> nextMirrorOptions = new List<MirrorOption>();
+        // Loop through all given mirror options
+        foreach (MirrorOption option in mirrorOptions)
+        {
+            // Check for a direct firing solution first
+            // We can do this by looking for a direct path to the target
+            bool foundIntersect = false;
+            Vector3 delta = option.target - start;
+            foreach (MirrorPlane plane in option.obstacles)
+            {
+                if (plane.checkForIntersect(start, delta))
+                {
+                    foundIntersect = true;
+                    break;
+                }
+            }
+
+            // If no direct firing solutions were found, we look for ricochets without recursing any further
+            if (foundIntersect)
+            {
+                // This implementation is heavily influenced by the ideas presented in the following stackexchange post:
+                // https://softwareengineering.stackexchange.com/questions/290628/algorithm-for-calculating-a-bullet-path-to-a-target-with-max-2-ricochets
+                // However, my implementation being translated to 3D, assumes a few things:
+                // - Bounceable walls are always vertical
+                // - Bounceable walls are always infinitely high
+
+                // Loop through all bounceable obstacles
+                for (int idx = 0; idx < option.obstacles.Count; idx++)
+                {
+                    MirrorPlane obstacle = option.obstacles[idx];
+                    if (!obstacle.bounceable) continue;
+
+                    // If the target position is on the opposite side of the normal, a ricochet isn't possible, and skip this obstacle
+                    if (Vector3.Dot(option.target - obstacle.bounds.center, obstacle.normal) <= 0) continue;
+                    // Create a "mirrored" target by subtracting twice the normal of the selected plane
+                    Vector3 mirroredTarget = option.target - 2 * obstacle.normal;
+                    // Check for a path to that mirrored target
+                    foundIntersect = false;
+                    delta = mirroredTarget - start;
+                    for (int jdx = 0; jdx < option.obstacles.Count; jdx++)
+                    {
+                        // Skip this obstacle
+                        if (idx == jdx) continue;
+
+                        if (option.obstacles[jdx].checkForIntersect(start, delta))
+                        {
+                            foundIntersect = true;
+                            break;
+                        }
+                    }
+                    
+                    // If no launch vectors have been found, make a new mirror option utilizing this obstacle
+                    if (results.Count == 0 && foundIntersect)
+                    {
+                        // Mirror all obstacles about the selected plane
+                        List<MirrorPlane> mirroredObstacles = new List<MirrorPlane>();
+                        for (int jdx = 0; jdx < option.obstacles.Count; jdx++)
+                        {
+                            // Skip this obstacle
+                            if (idx == jdx) continue;
+                            // Create a mirrored copy of the obstacle
+                            Vector3 mirroredNormal = option.obstacles[jdx].normal - 2 * Vector3.Dot(option.obstacles[jdx].normal, option.obstacles[idx].normal) * option.obstacles[idx].normal;
+                            Bounds mirroredBounds = option.obstacles[jdx].bounds;
+                            mirroredBounds.min -= 2 * option.obstacles[idx].normal;
+                            mirroredBounds.max -= 2 * option.obstacles[idx].normal;
+                            mirroredObstacles.Add(new MirrorPlane(mirroredNormal, mirroredBounds, option.obstacles[jdx].bounceable));
+                        }
+                        // Append the new mirror option to the list
+                        nextMirrorOptions.Add(new MirrorOption(mirroredObstacles, mirroredTarget));
+                    }
+                }
+            }
+            else
+            {
+                // If we get here, then a direct firing solution should have been found
+                results = calculateFiringSolutions(start, option.target, exitSpd);
+                // If the direct path returns solutions, we're done
+                if (results.Count > 0) break;
+            }
+        }
+        
+        // If no results have been found so far, then we try to recurse, if we haven't hit the max depth
+        if (results.Count == 0 && currentDepth < maxDepth)
+        {
+            results.AddRange(checkForRicochets(start, exitSpd, source, maxDepth, currentDepth + 1, uncertainty, nextMirrorOptions));
+        }
+
+        return results;
+    }
+    private static Trajectory updateTrajectory(Trajectory trajectory, int maxIterations, GameObject ignored, float rayDist)
+    {
+        Impact lastImpact = null;
+        Trajectory lastTrajectory = trajectory;
+        Trajectory output = trajectory;
+
+        // Loop until a noBounceObstacle is hit
+        for (int idx = 0; idx < maxIterations; idx++)
+        {
+            // Find next intersection
+            Impact impact = findFirstIntersection(lastTrajectory, ignored, rayDist);
+            // If no intersection was found, then the previous impact must be the last impact
+            if (impact == null)
+                return output;
+            // If the impact is not a bounce, then it is the last impact
+            if (!impact.bounce)
+            {
+                output.impacts.Add(impact);
+                return output;
+            }
+            // Otherwise, prep for the next loop iteration
+            lastImpact = impact;
+            lastTrajectory.launchVec = lastImpact.bounceVec;
+            lastTrajectory.startPoint = lastImpact.impactPoint;
+            lastTrajectory.impacts.Add(lastImpact);
+            output.impacts.Add(lastImpact);
+        }
+        // If we exit the loop, we hit the iteration limit and should return the last impact found
+        return output;
+    }
+    private static Impact findFinalImpact(Trajectory trajectory, int maxIterations, GameObject ignored, float rayDist)
     {
         Impact lastImpact = null;
         Trajectory lastTrajectory = trajectory;
@@ -178,10 +367,11 @@ public class Trajectory
         // If we exit the loop, we hit the iteration limit and should return the last impact found
         return lastImpact;
     }
-    private Impact findFirstIntersection(Trajectory traj, GameObject ignored, float rayDist)
+    private static Impact findFirstIntersection(Trajectory traj, GameObject ignored, float rayDist)
     {
         // Since we're trying to find the first intersection, the trajectory given is likely incomplete
         // The only information we require is the launch vector, start position, and objects to take into account
+        // NOTE: This simplifies quite a bit for a first attempt, and is not great at some objects or scenarios
 
         // Calculate some statistics to know the bounds of our impact checking
         Bounds bounds = new Bounds();
@@ -196,22 +386,47 @@ public class Trajectory
         float timeIter = 0f;
         Vector3 iterPos = traj.startPoint;
         Vector3 vel = traj.launchVec;
+        float hitDist = -1f;
+        RaycastHit hitInfo;
         while (bounds.Contains(iterPos))
         {
             // Cast a ray in the direction of the current projectile velocity, scaled by the given ray distance
-            RaycastHit hitInfo;
-            if (Physics.Raycast(iterPos, vel.normalized, out hitInfo, rayDist) && (ignoredTags == null || !ignoredTags.Contains(hitInfo.collider.tag)))
+            if (Physics.Raycast(iterPos, vel.normalized, out hitInfo, rayDist) && (traj.ignoredTags == null || !traj.ignoredTags.Contains(hitInfo.collider.tag)))
+            {
+                // Find the distance until ray intersection
+                hitDist = hitInfo.distance;
+                // Increase the time by 90% of the estimated time to impact
+                timeIter += vel.magnitude / (hitDist * 0.9f);
+                // Update the other iteration variables
+                iterPos = traj.startPoint + vel * timeIter + 0.5f * Physics.gravity * timeIter * timeIter;
+                vel = traj.launchVec + Physics.gravity * timeIter;
+                // Break out of the while loop
+                break;
+            }
+            // Increase the time by the current projectile speed divided by the desired ray distance
+            // It seems to be beneficial to have a bit of overlap here, so we aim to overlap 1/4 of the ray distance
+            timeIter += vel.magnitude / (rayDist * 3 / 4);
+            // Get the new projectile position and speed from the ballistic trajectory equations
+            iterPos = traj.startPoint + vel * timeIter + 0.5f * Physics.gravity * timeIter * timeIter;
+            vel = traj.launchVec + Physics.gravity * timeIter;
+        }
+
+        if (hitDist > 0)
+        {
+            // If we get here, we found a hit earlier, and have been positioned right in front of the predicted hit location
+            // Cast a ray in the direction of the projectile velocity
+            if (Physics.Raycast(iterPos, vel.normalized, out hitInfo, hitDist) && (traj.ignoredTags == null || !traj.ignoredTags.Contains(hitInfo.collider.tag)))
             {
                 // If we hit something, grab the impact info and return it
                 Impact impact = new Impact();
-                // We can grab some info directly
+                // We can grab some info directly from the raycast
                 impact.gameObject = hitInfo.collider.gameObject;
                 impact.impactPoint = hitInfo.point;
                 impact.impactNormal = hitInfo.normal;
-                // Calculate the time to impact, seeing as we now have a start point, end point, and launch vector
+                // Estimate the time to impact, seeing as we now have a start point, end point, and launch vector
                 impact.timeDiff = calculateImpactTime(traj.startPoint, impact.impactPoint, traj.launchVec);
                 // Search for the object in the obstacle list
-                Impactable hitObstacle = obstacles.Find(x => x.gameObject.Equals(impact.gameObject));
+                Impactable hitObstacle = traj.obstacles.Find(x => x.gameObject.Equals(impact.gameObject));
                 // If the obstacle isn't in the list, we assume we can't bounce off of it
                 if (hitObstacle == null || !hitObstacle.bounceable)
                 {
@@ -230,12 +445,19 @@ public class Trajectory
                     return impact;
                 }
             }
-            // Increase the time by the current projectile speed divided by the desired ray distance
-            // Get the new projectile position and speed from the ballistic trajectory equations
+            else
+            {
+                // If we get here, something went wrong
+                // Normally I'd throw an error, but for a proof of concept like this, I shall simply return null and log something
+                Debug.Log("Predicted an impact that wasn't found.");
+                return null;
+            }
         }
-
-        // If we get here, we found nothing, and return null
-        return null;
+        else
+        {
+            // If we get here, we found nothing, and return null
+            return null;
+        }
     }
     private static List<Vector3> calculateSegmentPoints(Trajectory traj, int numPoints)
     {
@@ -294,5 +516,41 @@ public class Trajectory
             results.Add(time1);
 
         return results;
+    }
+
+    // Internal data structures and classes
+    private struct MirrorOption
+    {
+        public MirrorOption(List<MirrorPlane> obstacles, Vector3 target)
+        {
+            this.obstacles = obstacles;
+            this.target = target;
+        }
+
+        public List<MirrorPlane> obstacles { get; }
+        public Vector3 target { get; }
+    }
+    private class MirrorPlane
+    {
+        public Vector3 normal;
+        public bool bounceable;
+        public Bounds bounds;
+        public MirrorPlane(Vector3 normal, Bounds bounds, bool bounceable)
+        {
+            Vector3 newNormal = new Vector3(normal.x, 0, normal.z);
+            this.normal = newNormal.normalized;
+            this.bounceable = bounceable;
+            this.bounds = bounds;
+        }
+        public bool checkForIntersect(Vector3 origin, Vector3 dir)
+        {
+            // If, somehow, the vector and plane are parallel, we assume no intersection
+            if (Vector3.Dot(normal, dir) == 0) return false;
+            // Otherwise, we can calculate the point on the plane that the line intersects
+            float d = Vector3.Dot(bounds.center - origin, normal) / Vector3.Dot(dir.normalized, normal);
+            Vector3 intersection = origin + dir.normalized * d;
+            // If the intersection point is within the bounds of the plane, there is an intersection
+            return bounds.Contains(intersection);
+        }
     }
 }
