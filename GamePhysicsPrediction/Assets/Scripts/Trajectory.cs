@@ -224,6 +224,7 @@ public class Trajectory
     {
         List<Trajectory> results = new List<Trajectory>();
         List<MirrorOption> nextMirrorOptions = new List<MirrorOption>();
+        Debug.Log("Current Recursion Depth = " + currentDepth);
         // Loop through all given mirror options
         foreach (MirrorOption option in mirrorOptions)
         {
@@ -236,6 +237,7 @@ public class Trajectory
                 if (plane.checkForIntersect(start, delta))
                 {
                     foundIntersect = true;
+                    Debug.Log("No direct solution found, intersecting the plane located at " + plane.bounds.center);
                     break;
                 }
             }
@@ -255,10 +257,10 @@ public class Trajectory
                     MirrorPlane obstacle = option.obstacles[idx];
                     if (!obstacle.bounceable) continue;
 
-                    // If the target position is on the opposite side of the normal, a ricochet isn't possible, and skip this obstacle
-                    if (Vector3.Dot(option.target - obstacle.bounds.center, obstacle.normal) <= 0) continue;
-                    // Create a "mirrored" target by subtracting twice the normal of the selected plane
-                    Vector3 mirroredTarget = option.target - 2 * obstacle.normal;
+                    // If the target position is on the opposite side of the plane, a ricochet isn't possible
+                    if (Vector3.Dot(option.target - obstacle.bounds.center, obstacle.normal) * Vector3.Dot(start - obstacle.bounds.center, obstacle.normal) < 0) break;
+                    // Create a "mirrored" target
+                    Vector3 mirroredTarget = obstacle.mirrorPoint(option.target);
                     // Check for a path to that mirrored target
                     foundIntersect = false;
                     delta = mirroredTarget - start;
@@ -270,8 +272,16 @@ public class Trajectory
                         if (option.obstacles[jdx].checkForIntersect(start, delta))
                         {
                             foundIntersect = true;
+                            Debug.Log("no mirrored trajectory");
                             break;
                         }
+                    }
+
+                    // If there's a path found to the mirrored target, use it
+                    if (!foundIntersect)
+                    {
+                        results.AddRange(calculateFiringSolutions(start, mirroredTarget, exitSpd));
+                        Debug.Log("Mirrored solution returned " + results.Count + " options");
                     }
                     
                     // If no launch vectors have been found, make a new mirror option utilizing this obstacle
@@ -286,8 +296,8 @@ public class Trajectory
                             // Create a mirrored copy of the obstacle
                             Vector3 mirroredNormal = option.obstacles[jdx].normal - 2 * Vector3.Dot(option.obstacles[jdx].normal, option.obstacles[idx].normal) * option.obstacles[idx].normal;
                             Bounds mirroredBounds = option.obstacles[jdx].bounds;
-                            mirroredBounds.min -= 2 * option.obstacles[idx].normal;
-                            mirroredBounds.max -= 2 * option.obstacles[idx].normal;
+                            mirroredBounds.min = option.obstacles[idx].mirrorPoint(mirroredBounds.min);
+                            mirroredBounds.max = option.obstacles[idx].mirrorPoint(mirroredBounds.max);
                             mirroredObstacles.Add(new MirrorPlane(mirroredNormal, mirroredBounds, option.obstacles[jdx].bounceable));
                         }
                         // Append the new mirror option to the list
@@ -299,6 +309,7 @@ public class Trajectory
             {
                 // If we get here, then a direct firing solution should have been found
                 results = calculateFiringSolutions(start, option.target, exitSpd);
+                Debug.Log("Direct solution returned " + results.Count + " options");
                 // If the direct path returns solutions, we're done
                 if (results.Count > 0) break;
             }
@@ -307,6 +318,7 @@ public class Trajectory
         // If no results have been found so far, then we try to recurse, if we haven't hit the max depth
         if (results.Count == 0 && currentDepth < maxDepth)
         {
+            Debug.Log("Recursing with " + nextMirrorOptions.Count + " options");
             results.AddRange(checkForRicochets(start, exitSpd, source, maxDepth, currentDepth + 1, uncertainty, nextMirrorOptions));
         }
 
@@ -549,8 +561,15 @@ public class Trajectory
             // Otherwise, we can calculate the point on the plane that the line intersects
             float d = Vector3.Dot(bounds.center - origin, normal) / Vector3.Dot(dir.normalized, normal);
             Vector3 intersection = origin + dir.normalized * d;
-            // If the intersection point is within the bounds of the plane, there is an intersection
-            return bounds.Contains(intersection);
+            // If the intersection point is within the bounds of the plane, and the distance is shorter than the distance to target, there is an intersection
+            return (bounds.Contains(intersection) && d < dir.magnitude);
+        }
+        public Vector3 mirrorPoint(Vector3 point)
+        {
+            // Calculate the shortest distance from the point to the plane
+            float dist = Vector3.Dot(normal, point) - Vector3.Dot(normal, bounds.center);
+            // Shift the point in the negative normal direction by twice the calculated distance
+            return point - 2 * dist * normal;
         }
     }
 }

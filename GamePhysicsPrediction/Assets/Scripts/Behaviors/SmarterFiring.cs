@@ -38,7 +38,7 @@ public class SmarterFiring : BallisticBehavior
         }
 
         // Debug output
-        if (debug)
+        if (debug && output != null)
             output.displayTrajectory(lr, linesPerSegment);
 
         return output;
